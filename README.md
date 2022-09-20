@@ -1,18 +1,18 @@
-### [Nextcloud](https://github.com/S8mething/projects/tree/main/Nextcloud)
+### [Nextcloud](https://github.com/S8mething/CV-Projects/tree/main/Nextcloud)
 #### Tools:
 > Docker,
 > AWS EC2,
 > AWS Route 53,
 > AWS EFS.
 ---
-### [Static Website Hosting](https://github.com/S8mething/projects/tree/main/Static-Website-Hosting)
+### [Static Website Hosting](https://github.com/S8mething/CV-Projects/tree/main/Static-Website-Hosting)
 #### Tools:
 > AWS S3,
 > AWS Route 53,
 > AWS Cloudfront,
 > AWS Certificate Manager.
 ---
-### [Serverless Sending Application](https://github.com/S8mething/projects/tree/main/Serverless%20Sending%20Application)
+### [Serverless Sending Application](https://github.com/S8mething/CV-Projects/tree/main/Serverless%20Sending%20Application)
 #### Tools:
 > AWS S3, 
 > AWS Lambda,
@@ -22,7 +22,7 @@
 > AWS API Gateway,
 > JS and Python.
 ---
-### [Containers, Database and Visualization](https://github.com/S8mething/projects/tree/main/Containers%2C%20Database%20and%20Visualization)
+### [Containers, Database and Visualization](https://github.com/S8mething/CV-Projects/tree/main/Containers%2C%20Database%20and%20Visualization)
 #### Tools:
 > AWS VPC,
 > AWS RDS, 
@@ -32,7 +32,7 @@
 > Docker,
 > Docker images: phpMyAdmin and Metabase
 ---
-### [AWS to Azure site to site VPN using BGP](https://github.com/S8mething/projects/tree/main/AWS%20to%20Azure%20site%20to%20site%20VPN%20using%20BGP) 
+### [AWS to Azure site to site VPN using BGP](https://github.com/S8mething/CV-Projects/tree/main/AWS%20to%20Azure%20site%20to%20site%20VPN%20using%20BGP) 
 #### Tools:
 > AWS VPC,
 > AWS EC2,
@@ -41,7 +41,7 @@
 > Azure Virtual Machine,
 > Azure Virtual Network Gateway
 ---
-### [Jenkins to AWS ECS Spring-boot Petclinic APP](https://github.com/S8mething/projects/tree/main/Jenkins%20to%20AWS%20ECS%20Springboot%20Petclinic%20APP) 
+### [Jenkins to AWS ECS Spring-boot Petclinic APP](https://github.com/S8mething/CV-Projects/tree/main/Jenkins%20to%20AWS%20ECS%20Springboot%20Petclinic%20APP) 
 #### Tools:
 > Jenkins,
 > Gitlab,
@@ -60,7 +60,7 @@
 > Springboot Petclinic App,
 > phpMyAdmin docker container
 ---
-### [Microservice Boutique App on EKS Cluster](https://github.com/S8mething/projects/tree/main/Microservices%20app%20on%20EKS%20Cluster) 
+### [Microservice Boutique App on EKS Cluster](https://github.com/S8mething/CV-Projects/tree/main/Microservices%20app%20on%20EKS%20Cluster) 
 #### Tools:
 > Jenkins,
 > Gitlab,
@@ -76,7 +76,7 @@
 > Istio service mesh,
 > eksctl
 ---
-### [CI-CD with Jenkins, Ansible, EKS](https://github.com/S8mething/projects/tree/main/CI-CD%20with%20Jenkins%2C%20Ansible%2C%20EKS)
+### [CI-CD with Jenkins, Ansible, EKS](https://github.com/S8mething/CV-Projects/tree/main/CI-CD%20with%20Jenkins%2C%20Ansible%2C%20EKS)
 #### Tools:
 > Ansible,
 > Jenkins,
@@ -88,7 +88,7 @@
 > regapp on Tomcat,
 > Smee.io proxy
 ---
-### [Python](https://github.com/S8mething/projects/tree/main/Python)
+### [Python](https://github.com/S8mething/CV-Projects/tree/main/Python)
 #### Tools:
 > Python,
 > AWS CloudFormation,
