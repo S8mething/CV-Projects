@@ -1,0 +1,79 @@
+version: '3.9'
+
+networks:
+  nextcloud_network:
+    external: true 
+volumes:
+  nextcloud:
+  
+services:
+
+  nextcloud-app:
+    image: nextcloud
+    restart: always 
+    volumes:
+      - nextcloud:/var/www/html
+      - ./app/custom_apps:/var/www/html/custom_apps
+      - ./app/config:/var/www/html/config
+      - ./app/data:/var/www/html/data
+      - ./app/themes:/var/www/html/themes
+      - /etc/localtime:/etc/localtime:ro  
+    networks:
+      - nextcloud_network
+    environment:
+      - MYSQL_DATABASE
+      - MYSQL_USER
+      - MYSQL_PASSWORD
+      - MYSQL_HOST    
+    depends_on:
+      - nextcloud-db
+      - proxy
+      - proxy-db  
+      
+  nextcloud-db:
+    image: mariadb
+    restart: always
+    volumes:
+      - ./db:/var/lib/postgresql/data
+    environment:
+      - MYSQL_ROOT_PASSWORD
+      - MYSQL_PASSWORD
+      - MYSQL_DATABASE
+      - MYSQL_USER
+    networks:
+      - nextcloud_network
+  
+  proxy:
+    image: jc21/nginx-proxy-manager:latest
+    restart: always
+    ports:
+      - 80:80
+      - 81:81
+      - 443:443
+    environment:
+      - DB_MYSQL_HOST=proxy-db
+      - DB_MYSQL_PORT=3306
+      - DB_MYSQL_USER=${PROXY_DB_USER}
+      - DB_MYSQL_PASSWORD=${PROXY_DB_PASSWORD}
+      - DB_MYSQL_NAME=proxy-db
+    volumes:
+      - ./proxy:/data
+      - ./ssl:/etc/letsencrypt
+    networks:
+      - nextcloud_network       
+    depends_on:
+      - proxy-db
+        
+  proxy-db:
+    image: jc21/mariadb-aria:latest
+    restart: always
+    environment:
+      - MYSQL_ROOT_PASSWORD=${PROXY_DB_ROOT_PASSWORD}
+      - MYSQL_DATABASE=proxy-db
+      - MYSQL_USER=${PROXY_DB_USER}
+      - MYSQL_PASSWORD=${PROXY_DB_PASSWORD}
+    volumes:
+      - ./proxy-db:/var/lib/mysql
+    networks:
+      - nextcloud_network
+    

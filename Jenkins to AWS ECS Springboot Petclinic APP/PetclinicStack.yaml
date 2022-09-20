@@ -1,0 +1,727 @@
+Description:  'Jenkins petclinic spring project with ECS, ECR and RDS'
+
+Parameters:
+
+  ProjectName:
+    Description: 'Project name'
+    Type: 'String'
+    Default: 'petclinic-spring-project'
+
+  AmiEC2Id:
+    Description: AMI for EC2 Instances. Ubuntu 20.04
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/canonical/ubuntu/server/20.04/stable/20220610/amd64/hvm/ebs-gp2/ami-id'
+
+  AmiECSId:
+      Description: AMI for ECS Instances. Linux 2
+      Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+      Default: '/aws/service/ecs/optimized-ami/amazon-linux-2/recommended/image_id'              
+    
+  AdminMySQLName:
+    Description: 'Administrator Name'
+    Type: 'String'
+    Default: 'Admin'
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: 'must begin with a letter and contain only alphanumeric characters.'
+
+  MySQLAdminPassParameterName:
+    Description: 'Parameter name "MYSQL_ADMIN_PASSWORD". Parameter which contains Admin Password for RDS Database.'
+    Type: 'String'
+    Default: 'MYSQL_ADMIN_PASSWORD'
+
+  MySQLDBNameParameterName:
+    Description: 'Parameter name "MYSQL_NAME". Parameter which contains Petclinic Database Name.'
+    Type: 'String'
+    Default: 'MYSQL_NAME'
+
+  MySQLDBPassParameterName:
+    Description: 'Parameter name "MYSQL_PASS" Parameter which contains Petclinic Database Password.'
+    Type: 'String'
+    Default: 'MYSQL_PASS'
+
+  ECRepositoryName:
+    Description: 'Name of ECR'
+    Type: 'String'
+    MinLength: '3'
+    MaxLength: '20'
+    Default: 'petclinic'
+
+  LogGroupName:
+    Description: 'LogGroup Name'
+    Type: 'String'
+
+  KeyNameECSEC2:
+    Description: The EC2 Key Pair, allow SSH access to the ECS instances
+    Type: AWS::EC2::KeyPair::KeyName
+
+  KeyNamePHPEC2:
+    Description: The EC2 Key Pair, allow SSH access to the PHP instance
+    Type: AWS::EC2::KeyPair::KeyName    
+
+  CertificateARN:
+    Description: 'ARN of Certificate'
+    Type: 'String'  
+
+Resources:
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref 'LogGroupName'
+
+  ECR:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref 'ECRepositoryName'
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.16.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: 'Name'
+          Value: 'Petclinic-VPC'
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.16.0.0/24
+      Tags:
+        - Key: 'Name'
+          Value: 'PublicSubnetA'
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.16.16.0/24
+      Tags:
+        - Key: 'Name'
+          Value: 'PrivateSubnetA'
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 10.16.32.0/24
+      Tags:
+        - Key: 'Name'
+          Value: 'PublicSubnetB'
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 10.16.48.0/24
+      Tags:
+        - Key: 'Name'
+          Value: 'PrivateSubnetB'
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: 'RDS Subnet Group'
+      SubnetIds:
+        - !Ref 'PrivateSubnetA'
+        - !Ref 'PrivateSubnetB'
+      Tags:
+        - Key: 'Name'
+          Value: 'RDS Subnet Groups'        
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: 'Name'
+          Value: 'Petclinic Public Route Table'
+
+  RouteTablePrivate:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: 'Name'
+          Value: 'Petclinic Private Route Table'          
+
+  IGWRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref 'RouteTable'
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref 'InternetGateway'        
+  
+  RouteTableAssocPubB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PublicSubnetB'
+      RouteTableId: !Ref 'RouteTable'
+
+  RouteTableAssocPubA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PublicSubnetA'
+      RouteTableId: !Ref 'RouteTable'
+
+  RouteTableAssocPrivB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PrivateSubnetB'
+      RouteTableId: !Ref 'RouteTablePrivate'
+
+  RouteTableAssocPrivA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PrivateSubnetA'
+      RouteTableId: !Ref 'RouteTablePrivate'      
+
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: 'DB instance SG'
+      GroupDescription: 'Database Security Group'
+      VpcId: !Ref 'VPC'
+      SecurityGroupIngress:
+        - Description: 'Allow access to petclinic container to ECS'
+          IpProtocol: 'tcp'
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref 'ECSInstanceGroup'
+        - Description: 'Allow access to petclinic container to PHP'
+          IpProtocol: 'tcp'
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref 'PHPInstanceGroup'          
+      Tags:
+        - Key: 'Name'
+          Value: 'DB Group'
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: 'ALB SG'
+      GroupDescription: 'ALB Security Group'
+      VpcId: !Ref 'VPC'
+      SecurityGroupIngress:
+        - Description: 'Allow HTTP access'
+          IpProtocol: 'tcp'
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '0.0.0.0/0'
+        - Description: 'Allow HTTPS access'
+          IpProtocol: 'tcp'
+          FromPort: 443
+          ToPort: 443
+          CidrIp: '0.0.0.0/0'    
+      Tags:
+        - Key: 'Name'
+          Value: 'ALB-SG'          
+
+  PHPInstanceGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: 'PHP SG'
+      GroupDescription: 'PHP Security Group'
+      VpcId: !Ref 'VPC'
+      SecurityGroupIngress:
+        - Description: 'Allow HTTP access'
+          IpProtocol: 'tcp'
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '0.0.0.0/0'
+        - Description: 'Allow SSH access to PHP Instance'
+          IpProtocol: 'tcp'
+          FromPort: 22
+          ToPort: 22
+          CidrIp: '0.0.0.0/0'        
+      Tags:
+        - Key: 'Name'
+          Value: 'PHP' 
+
+  ECSInstanceGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: 'ECS SG'
+      GroupDescription: 'ECS Security Group'
+      VpcId: !Ref 'VPC'
+      SecurityGroupIngress:
+        - Description: 'Allow HTTP Access'
+          IpProtocol: 'tcp'
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref 'ALBSecurityGroup'
+        - Description: 'Allow HTTPS Access'
+          IpProtocol: 'tcp'
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref 'ALBSecurityGroup'  
+        - Description: 'Allow SSH access to ECS Instance'
+          IpProtocol: 'tcp'
+          FromPort: 22
+          ToPort: 22
+          CidrIp: '0.0.0.0/0'        
+      Tags:
+        - Key: 'Name'
+          Value: 'ECS' 
+
+  InstanceSGSelfReferenceRule:
+    Type: "AWS::EC2::SecurityGroupIngress"
+    Properties:
+      GroupId: !Ref 'ECSInstanceGroup'
+      IpProtocol: '-1'
+      SourceSecurityGroupId: !Ref 'ECSInstanceGroup'          
+  
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: 'Name'
+          Value: 'MyIGW'
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref 'VPC'
+      InternetGatewayId: !Ref 'InternetGateway' 
+
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: 'TargetGroup'    
+    Properties:
+      IpAddressType: 'ipv4'
+      Name: 'Petclinic-ALB'
+      Scheme: 'internet-facing'
+      SecurityGroups: 
+        - !Ref 'ALBSecurityGroup'
+      Subnets:
+        - !Ref 'PublicSubnetA'
+        - !Ref 'PublicSubnetB'
+      Type: 'application'
+
+  HTTPListener:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    DependsOn: 
+    - 'ECSServiceRole'
+    - 'ALB'
+    Properties:
+      LoadBalancerArn: !Ref 'ALB'
+      Port: 80
+      Protocol: "HTTP"
+      DefaultActions:
+      -  
+        Type: "redirect"
+        RedirectConfig:
+          Protocol: "HTTPS"
+          Port: 443
+          Host: "#{host}"
+          Path: "/#{path}"
+          Query: "#{query}"
+          StatusCode: "HTTP_301"
+
+  HTTPSListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn:
+    - 'ECSServiceRole'
+    - 'ALB'    
+    Properties:
+      Certificates: 
+        - CertificateArn: !Ref 'CertificateARN'
+      LoadBalancerArn: !Ref 'ALB'
+      Port: 443
+      Protocol: 'HTTPS'
+      SslPolicy: 'ELBSecurityPolicy-2016-08'  
+      DefaultActions: 
+        -
+          Type: 'forward'
+          TargetGroupArn: !Ref 'TargetGroup'
+      
+  TargetGroup:
+    Type: "AWS::ElasticLoadBalancingV2::TargetGroup"
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: "/"
+      Port: 80
+      Protocol: "HTTP"
+      HealthCheckPort: "traffic-port"
+      HealthCheckProtocol: "HTTP"
+      HealthCheckTimeoutSeconds: 5
+      UnhealthyThresholdCount: 2
+      TargetType: "instance"
+      Matcher: 
+        HttpCode: "200"
+      VpcId: !Ref 'VPC'
+      Name: "target-group"
+      HealthCheckEnabled: true
+
+  rdsDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: 20
+      DBInstanceClass: 'db.t3.micro'
+      AllowMajorVersionUpgrade: 'false'
+      AutoMinorVersionUpgrade: 'false'
+      DBInstanceIdentifier: 'petclinic-db' 
+      DBName: 'petclinic'
+      Engine: 'mysql'
+      MasterUsername: !Ref 'AdminMySQLName'
+      MasterUserPassword: !Join ["", [ "{{", "resolve:ssm-secure:", !Ref MySQLAdminPassParameterName, "}}" ]]
+      MultiAZ: 'false'
+      Port: 3306
+      PubliclyAccessible: 'false'
+      StorageEncrypted: 'false'
+      StorageType: 'gp2'
+      DBSubnetGroupName: !Ref 'DBSubnetGroup'
+      VPCSecurityGroups:
+        - !Ref 'DBSecurityGroup'
+      Tags:
+        - Key: 'Name'
+          Value: 'Petclinic-DB'
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    DependsOn:
+      - EcsAutoscalingGroup
+      - EcsInstanceLc
+    Properties:
+      ClusterName: "Petclinic"
+
+  EcsInstanceLc:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      LaunchConfigurationName: 'ECS'
+      AssociatePublicIpAddress: 'false'
+      IamInstanceProfile: 'ecsInstanceRole'
+      ImageId: !Ref AmiECSId
+      EbsOptimized: 'false'
+      InstanceMonitoring: 'false'
+      InstanceType: 't3.micro'
+      KeyName: !Ref 'KeyNameECSEC2' 
+      SecurityGroups:
+        - !Ref 'ECSInstanceGroup'
+      BlockDeviceMappings: 
+        - DeviceName: /dev/sda1
+          Ebs: 
+            VolumeSize: '30'
+            VolumeType: 'gp2'
+      UserData: 
+        Fn::Base64: !Sub |
+            #!/bin/bash -ex
+            echo ECS_CLUSTER=Petclinic >> /etc/ecs/ecs.config
+
+  EcsAutoscalingGroup: 
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: 'ECS ASG'
+      LaunchConfigurationName: !Ref 'EcsInstanceLc'
+      MaxSize: 2
+      MinSize: 1
+      DesiredCapacity: 2
+      VPCZoneIdentifier: 
+        - !Ref 'PrivateSubnetA'
+        - !Ref 'PrivateSubnetB'
+      Tags: 
+        - Key: 'Name'
+          Value: 'ECS'
+          PropagateAtLaunch: 'true'
+    
+  EcsPHPInstanceLc:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    DependsOn: 'rdsDBInstance'
+    Properties:
+      LaunchConfigurationName: 'PHP'
+      AssociatePublicIpAddress: 'true'
+      ImageId: !Ref AmiEC2Id
+      EbsOptimized: 'false'
+      InstanceMonitoring: 'false'
+      InstanceType: 't3.micro' 
+      KeyName: !Ref KeyNamePHPEC2
+      SecurityGroups:
+        - !Ref 'PHPInstanceGroup'
+      BlockDeviceMappings: 
+        - DeviceName: /dev/sda1
+          Ebs: 
+            VolumeSize: '30'
+            VolumeType: 'gp2'
+      UserData: 
+        Fn::Base64: !Sub |
+            #!/bin/bash -ex
+            apt-get -y update
+            apt-get -y upgrade
+            apt-get -y install docker.io
+            docker run -p 80:80 -e PMA_PORT=3306 -e PMA_HOST=${rdsDBInstance.Endpoint.Address} phpmyadmin
+
+  EcsPHPAutoscalingGroup: 
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: 'PHP ASG'
+      LaunchConfigurationName: !Ref 'EcsPHPInstanceLc'
+      MaxSize: 1
+      MinSize: 1
+      DesiredCapacity: 1
+      VPCZoneIdentifier: 
+        - !Ref 'PublicSubnetA'
+        - !Ref 'PublicSubnetB'
+      Tags: 
+        - Key: 'Name'
+          Value: 'PHP'
+          PropagateAtLaunch: 'true'
+
+  s3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Gateway"
+      RouteTableIds:
+        - !Ref 'RouteTablePrivate'
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcId: !Ref 'VPC'               
+
+  ECSTelemetryEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: "True"
+      SubnetIds:
+        - !Ref 'PrivateSubnetA'
+        - !Ref 'PrivateSubnetB'
+      SecurityGroupIds:
+        - !Ref 'ECSInstanceGroup'
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ecs-telemetry
+      VpcId: !Ref 'VPC'
+
+  LogsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: "True"
+      SubnetIds:
+        - !Ref 'PrivateSubnetA'
+        - !Ref 'PrivateSubnetB'
+      SecurityGroupIds:
+        - !Ref 'ECSInstanceGroup'
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.logs
+      VpcId: !Ref 'VPC'          
+
+  SSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: "True"
+      SubnetIds:
+        - !Ref 'PrivateSubnetA'
+        - !Ref 'PrivateSubnetB'
+      SecurityGroupIds:
+        - !Ref 'ECSInstanceGroup'
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      VpcId: !Ref 'VPC'          
+
+  ECRApiEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: "True"
+      SubnetIds:
+        - !Ref 'PrivateSubnetA'
+        - !Ref 'PrivateSubnetB'
+      SecurityGroupIds:
+        - !Ref 'ECSInstanceGroup'
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ecr.api
+      VpcId: !Ref 'VPC'
+
+  ECREndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: "True"
+      SubnetIds:
+        - !Ref 'PrivateSubnetA'
+        - !Ref 'PrivateSubnetB'
+      SecurityGroupIds:
+        - !Ref 'ECSInstanceGroup'
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ecr.dkr
+      VpcId: !Ref 'VPC'
+
+  ECSEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: "True"
+      SubnetIds:
+        - !Ref 'PrivateSubnetA'
+        - !Ref 'PrivateSubnetB'
+      SecurityGroupIds:
+        - !Ref 'ECSInstanceGroup'
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ecs
+      VpcId: !Ref 'VPC'
+
+  ECSAgentEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: "True"
+      SubnetIds:
+        - !Ref 'PrivateSubnetA'
+        - !Ref 'PrivateSubnetB'
+      SecurityGroupIds:
+        - !Ref 'ECSInstanceGroup'
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ecs-agent
+      VpcId: !Ref 'VPC'          
+     
+  PetclinicTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn:
+      - 'ECR'
+      - 'ECSTaskExecutionRole'
+      - 'ECSServiceRole'        
+    Properties:
+      Family: 'petclinic'
+      RequiresCompatibilities:
+        - 'EC2'
+      ContainerDefinitions: 
+        -
+          Name: 'PetClinicApp'
+          Image: !Join ["/",[!Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com", !Ref ECRepositoryName ]] 
+          PortMappings: 
+          - 
+            ContainerPort: 8080
+            HostPort: 443
+          LogConfiguration: 
+            LogDriver: 'awslogs'
+            Options: 
+              awslogs-group : !Ref 'LogGroupName'
+              awslogs-region : 'eu-north-1'
+              awslogs-stream-prefix : 'ecs'
+          Environment:
+            - Name: 'MYSQL_URL'
+              Value: !Sub "jdbc:mysql://${rdsDBInstance.Endpoint.Address}/petclinic"  
+          Secrets:
+            - Name: 'MYSQL_USER' 
+              ValueFrom: !Join ["/", [!Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter", !Ref MySQLDBNameParameterName ]]
+            - Name: 'MYSQL_PASS'
+              ValueFrom: !Join ["/", [!Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter", !Ref MySQLDBPassParameterName ]]  
+      Cpu: 1024
+      Memory: 300
+      TaskRoleArn: !Ref 'ECSTaskExecutionRole'
+      ExecutionRoleArn: !Ref 'ECSTaskExecutionRole'
+
+  ECSServiceForPetclinicTask:
+    Type: AWS::ECS::Service
+    DependsOn: 
+      - 'PetclinicTaskDefinition'
+      - 'ECSCluster'
+      - 'ECSServiceRole'
+      - 'ALB'
+      - 'TargetGroup'
+      - 'HTTPListener'
+      - 'HTTPSListener'          
+    Properties:
+      Cluster: !Ref 'ECSCluster'
+      LoadBalancers:
+        - ContainerName: 'PetClinicApp'
+          ContainerPort: 8080
+          TargetGroupArn: !Ref 'TargetGroup'      
+      Role: !Ref 'ECSServiceRole'
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true       
+        MaximumPercent: 100
+        MinimumHealthyPercent: 50
+      DeploymentController:
+        Type: 'ECS'
+      DesiredCount: 0
+      EnableECSManagedTags: true
+      EnableExecuteCommand: false
+      LaunchType: 'EC2'
+      PlacementStrategies:
+        - Field: 'instanceId'
+          Type: 'spread'
+        - Field: 'attribute:ecs.availability-zone'
+          Type: 'spread'  
+      ServiceName: 'Petclinic-service'
+      Tags:
+        - Key: 'Name'
+          Value: 'Petclinic-Service'
+      TaskDefinition: !Ref 'PetclinicTaskDefinition'
+
+  ECSTaskExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: 'Petclinic-ECSTask-Role'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - ecs-tasks.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: 'Petclinic-ECSTask-Policy'
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - 'ecr:GetAuthorizationToken'
+                  - 'ecr:BatchCheckLayerAvailability'
+                  - 'ecr:GetDownloadUrlForLayer'
+                  - 'ecr:BatchGetImage'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'ssm:GetParameters'
+                Resource: 
+                  - !Join ["/", [!Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter", !Ref MySQLDBNameParameterName ]]
+                  - !Join ["/", [!Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter", !Ref MySQLDBPassParameterName ]]
+
+  ECSServiceRole:
+    Type: 'AWS::IAM::Role' 
+    Properties:
+      RoleName: ECSServiceRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs.amazonaws.com
+            Action:
+                - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: ecs-service
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'elasticloadbalancing:DeregisterInstancesFromLoadBalancer'
+                  - 'elasticloadbalancing:DeregisterTargets'
+                  - 'elasticloadbalancing:Describe*'
+                  - 'elasticloadbalancing:RegisterInstancesWithLoadBalancer'
+                  - 'elasticloadbalancing:RegisterTargets'
+                  - 'ec2:Describe*'
+                  - 'ec2:AuthorizeSecurityGroupIngress'
+                Resource: '*' 
+
+Outputs:
+  rdsEndpoint:
+    Description: 'RDS endpoint'
+    Value: !GetAtt 'rdsDBInstance.Endpoint.Address'
+
+  ALBDNS:
+    Description: 'ALB DNS NAME'
+    Value: !GetAtt 'ALB.DNSName'

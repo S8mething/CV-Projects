@@ -1,0 +1,22 @@
+appName: adservice
+appImage: <YOUR-APP-IMAGE-LINK>
+appVersion: "1.1"
+appReplicas: 2
+containerPort: 9555
+containerEnvVars:
+- name: PORT
+  value: "9555"
+- name: DISABLE_STATS
+  value: "1"
+- name: DISABLE_TRACING
+  value: "1"
+secretName: ecrcred
+livenessPeriodSeconds: 15
+readinessPeriodSeconds: 15
+cpuRequests: 150m
+memRequests: 180Mi
+cpuLimits: 200m
+memLimits: 300Mi
+
+portsName: grpc
+servicePort: 9555

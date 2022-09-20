@@ -1,0 +1,652 @@
+Description:  'CI-CD with Jenkins Ansible Kubernetes'
+
+Parameters:
+
+  ProjectName:
+    Description: 'Project name'
+    Type: 'String'
+    Default: 'CI-CD with Jenkins Ansible Kubernetes'
+
+  ECRepositoryName:
+    Description: 'ECR Name'
+    Type: 'String'
+    MinLength: '3'
+    MaxLength: '20'    
+    Default: 'regapp'
+
+  EKSClusterName:
+    Description: 'EKS Cluster name'
+    Type: 'String'
+    Default: 'RegApp-EKS'
+
+  AmiId:
+      Description: AMI for EC2 Instances. Ubuntu 20.04
+      Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+      Default: '/aws/service/canonical/ubuntu/server/20.04/stable/20220610/amd64/hvm/ebs-gp2/ami-id'
+
+  AmiEKSId:
+      Description: AMI for EKS Nodes Instances. Amazon Linux 2
+      Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+      Default: '/aws/service/eks/optimized-ami/1.22/amazon-linux-2/recommended/image_id'
+
+  EKSNodesKeyPairName:
+    Description: The EC2 Key Pair to allow SSH access to the EKS instances
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: 'EKS-Nodes'
+
+  JenkinsKeyPairName:
+    Description: The EC2 Key Pair to allow SSH access to the Jenkins instance
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: 'Jenkins-Server'
+
+  AnsibleKeyPairName:
+    Description: The EC2 Key Pair to allow SSH access to the Ansible instance
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: 'Ansible-Server'
+
+  MyIp:
+    Description: Your IP for ssh connection to Jenkins and Ansible servers
+    Type: String
+    Default: '0.0.0.0/0'
+
+Resources:  
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.16.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-VPC'
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.16.0.0/24
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-PublicSubnetA'
+        - Key: kubernetes.io/role/elb
+          Value: 1          
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.16.16.0/24
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-PrivateSubnetA'
+        - Key: kubernetes.io/role/internal-elb
+          Value: 1          
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 10.16.32.0/24
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-PublicSubnetB'
+        - Key: kubernetes.io/role/elb
+          Value: 1           
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 10.16.48.0/24
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-PrivateSubnetB'
+        - Key: kubernetes.io/role/internal-elb
+          Value: 1
+
+  RouteTablePublic:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-Public-Route-Table'
+
+  RouteTablePrivateA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-Private-Route-Table-A'
+
+  RouteTablePrivateB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-Private-Route-Table-B'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-IGW'          
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref 'VPC'
+      InternetGatewayId: !Ref 'InternetGateway'                     
+
+  IGWRoutePublic:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref 'RouteTablePublic'
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref 'InternetGateway'
+
+  RouteTableAssocPubB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PublicSubnetB'
+      RouteTableId: !Ref 'RouteTablePublic'
+
+  RouteTableAssocPubA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PublicSubnetA'
+      RouteTableId: !Ref 'RouteTablePublic'
+
+  RouteTableAssocPrivB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PrivateSubnetB'
+      RouteTableId: !Ref 'RouteTablePrivateB'
+
+  RouteTableAssocPrivA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PrivateSubnetA'
+      RouteTableId: !Ref 'RouteTablePrivateA'
+
+  JenkinsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Jenkins server
+      GroupName: Jenkins-SG
+      SecurityGroupIngress:
+        - Description: 'Allow SSH IPv4 IN'
+          IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: !Ref MyIp
+        - Description: 'Allow ICMP IPv4 IN'
+          IpProtocol: icmp
+          FromPort: '-1'
+          ToPort: '-1'
+          CidrIp: !Ref MyIp        
+        - Description: 'Allow ICMP IPv4 IN'
+          IpProtocol: tcp
+          FromPort: '8080'
+          ToPort: '8080'
+          CidrIp: !Ref MyIp  
+      VpcId: !Ref VPC
+
+  AnsibleSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Ansible server
+      GroupName: Ansible-SG
+      SecurityGroupIngress:
+        - Description: 'Allow SSH IPv4 IN from Jenkins Security Group'
+          IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          SourceSecurityGroupId: !Ref JenkinsSecurityGroup
+        - Description: 'Allow SSH IPv4 IN'
+          IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: !Ref MyIp          
+      VpcId: !Ref VPC
+
+  IngressAnsibleSecurityGroup:
+    Type: "AWS::EC2::SecurityGroupIngress"
+    Properties:
+      GroupId: !Ref 'AnsibleSecurityGroup'
+      IpProtocol: 'tcp'
+      FromPort: '443'
+      ToPort: '443'
+      SourceSecurityGroupId: !Ref 'AnsibleSecurityGroup'             
+
+  ControlPlaneSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${AWS::StackName}-ControlPlaneSecurityGroup
+      GroupDescription: Cluster communication with worker nodes
+      VpcId: !Ref VPC
+
+  ClusterSharedNodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${AWS::StackName}-ClusterSharedNodeSecurityGroup
+      GroupDescription: Communication between all nodes in the cluster
+      VpcId: !Ref VPC
+      Tags:
+        - Key: !Sub kubernetes.io/cluster/${ControlPlane}
+          Value: owned
+
+  IngressInterNodeGroupSG:
+    Type: "AWS::EC2::SecurityGroupIngress"
+    Properties:
+      GroupId: !Ref 'ClusterSharedNodeSecurityGroup'
+      IpProtocol: '-1'
+      SourceSecurityGroupId: !Ref 'ClusterSharedNodeSecurityGroup'       
+
+  IngressDefaultClusterToNodeSG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow managed and unmanaged nodes to communicate with each other (all ports)
+      GroupId: !Ref ClusterSharedNodeSecurityGroup
+      IpProtocol: '-1'
+      SourceSecurityGroupId: !Ref ControlPlaneSecurityGroup
+
+  IngressNodeToDefaultClusterSG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow unmanaged nodes to communicate with control plane (all ports)
+      GroupId: !Ref ControlPlaneSecurityGroup
+      IpProtocol: '-1'
+      SourceSecurityGroupId: !Ref ClusterSharedNodeSecurityGroup
+
+  IngressControlPlaneGroupForAnsibleSG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow to communicate Ansible server with Control plane
+      GroupId: !Ref ControlPlaneSecurityGroup
+      IpProtocol: 'tcp'
+      FromPort: '443'
+      ToPort: '443'
+      SourceSecurityGroupId: !Ref 'AnsibleSecurityGroup'     
+
+  ECR:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref 'ECRepositoryName'       
+
+  ControlPlane:
+    Type: AWS::EKS::Cluster
+    DependsOn:
+      - EKSClusterRole
+    Properties:
+      Logging:
+        ClusterLogging:
+          EnabledTypes:
+            - Type: api
+            - Type: audit
+            - Type: authenticator
+            - Type: controllerManager
+            - Type: scheduler
+      Name: !Ref EKSClusterName
+      ResourcesVpcConfig:
+        EndpointPrivateAccess: true
+        EndpointPublicAccess: true
+        SecurityGroupIds:
+          - !Ref ControlPlaneSecurityGroup
+        SubnetIds:
+          - !Ref PublicSubnetA
+          - !Ref PublicSubnetB
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetB
+      RoleArn: !GetAtt EKSClusterRole.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-ControlPlane
+
+  NodeLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    DependsOn:
+      - ControlPlane
+    Properties:
+      LaunchTemplateName: EKS-Node-Template
+      TagSpecifications:
+      - ResourceType: launch-template
+        Tags:
+          - Key: eks:cluster-name
+            Value: ${ControlPlane}   
+      LaunchTemplateData:
+        ImageId: !Ref AmiEKSId
+        InstanceType: t3.micro
+        KeyName: !Ref EKSNodesKeyPairName
+        SecurityGroupIds:
+          - !GetAtt 'ClusterSharedNodeSecurityGroup.GroupId'
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 20
+              VolumeType: gp2
+              DeleteOnTermination: true    
+        UserData:
+          Fn::Base64:
+            !Sub |
+              #!/bin/bash
+              set -o xtrace
+              /etc/eks/bootstrap.sh ${ControlPlane} --b64-cluster-ca ${ControlPlane.CertificateAuthorityData} --apiserver-endpoint ${ControlPlane.Endpoint}                                     
+
+  NodeGroup:
+    Type: AWS::EKS::Nodegroup
+    DependsOn:
+      - ControlPlane
+      - NodeLaunchTemplate
+      - s3GatewayEndpoint
+      - ECRApiEndpoint 
+      - ECREndpoint
+      - AutoscalingEndpoint
+      - EC2Endpoint
+      - STSEndpoint
+    Properties:
+      NodegroupName: NodeGroup
+      CapacityType: ON_DEMAND
+      ClusterName: !Ref ControlPlane 
+      ForceUpdateEnabled: false
+      LaunchTemplate:
+        Name: EKS-Node-Template
+        Version: !GetAtt NodeLaunchTemplate.LatestVersionNumber
+      NodeRole: !GetAtt 'NodeInstanceRole.Arn'
+      ScalingConfig:
+        DesiredSize: 2
+        MaxSize: 4
+        MinSize: 2
+      Subnets:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      UpdateConfig:
+        MaxUnavailable: 1
+
+  JenkinsLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: JenkinsLaunchTemplate
+      TagSpecifications:
+      - ResourceType: launch-template
+        Tags:
+          - Key: Name
+            Value: Jenkins-Instance   
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: t3.micro
+        KeyName: !Ref JenkinsKeyPairName        
+        BlockDeviceMappings:
+          - DeviceName: /dev/sda1
+            Ebs:
+              VolumeSize: 20
+              VolumeType: gp2
+              DeleteOnTermination: true    
+        UserData:
+          Fn::Base64:
+            !Sub |
+              #!/bin/bash
+              curl -fsSL https://pkg.jenkins.io/debian/jenkins.io.key | sudo tee \
+              /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+              echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] \
+              https://pkg.jenkins.io/debian binary/ | sudo tee \
+              /etc/apt/sources.list.d/jenkins.list > /dev/null              
+              apt-get -y update
+              apt-get -y upgrade
+              apt-get -y install fontconfig openjdk-11-jre
+              apt-get -y install jenkins                  
+
+  JenkinsEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateName: JenkinsLaunchTemplate
+        Version: !GetAtt JenkinsLaunchTemplate.LatestVersionNumber
+      PrivateDnsNameOptions:
+        EnableResourceNameDnsARecord: true
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: "0"
+          GroupSet:
+            - !Ref JenkinsSecurityGroup
+          DeleteOnTermination: true
+          SubnetId: !Ref "PublicSubnetA"
+      Tags:
+        - Key: Name
+          Value: Jenkins-Server
+
+  AnsibleLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: AnsibleLaunchTemplate
+      TagSpecifications:
+      - ResourceType: launch-template
+        Tags:
+          - Key: Name
+            Value: Ansible-Instance   
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: t3.micro
+        KeyName: !Ref AnsibleKeyPairName        
+        BlockDeviceMappings:
+          - DeviceName: /dev/sda1
+            Ebs:
+              VolumeSize: 20
+              VolumeType: gp2
+              DeleteOnTermination: true    
+        UserData:
+          Fn::Base64:
+            !Sub |
+              #!/bin/bash
+              apt-get -y update
+              apt-get -y upgrade
+              apt-get -y install ansible
+              apt-get -y install docker.io
+              groupadd docker
+              usermod -aG docker ubuntu
+              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+              apt-get -y install unzip
+              unzip awscliv2.zip
+              ./aws/install
+              apt install -y python3-pip
+              yes | pip3 install boto3
+              pip3 install docker openshift
+              pip3 install -Iv kubernetes==11.0.0
+              curl -LO https://storage.googleapis.com/kubernetes-release/release/`curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt`/bin/linux/amd64/kubectl
+              chmod +x ./kubectl
+              sudo mv ./kubectl /usr/local/bin/kubectl
+              apt-get -y install fontconfig openjdk-11-jre
+
+  AnsibleEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateName: AnsibleLaunchTemplate
+        Version: !GetAtt AnsibleLaunchTemplate.LatestVersionNumber
+      PrivateDnsNameOptions:
+        EnableResourceNameDnsARecord: true
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: "0"
+          GroupSet:
+            - !Ref AnsibleSecurityGroup
+          DeleteOnTermination: true
+          SubnetId: !Ref "PublicSubnetA"
+      Tags:
+        - Key: Name
+          Value: Ansible-Server                                            
+
+  EKSClusterRole:
+    Type: 'AWS::IAM::Role' 
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-EKSClusterRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - eks.amazonaws.com
+            Action:
+                - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - arn:aws:iam::aws:policy/AmazonEKSVPCResourceController
+
+  NodeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+        - !Ref NodeInstanceRole
+
+  NodeInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-NodeInstanceRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: !Sub ${AWS::StackName}-NodeInstanceScalingPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'autoscaling:DescribeAutoscalingGroups'
+                  - 'autoscaling:DescribeAutoScalingInstances'
+                  - 'autoscaling:DescribeLaunchConfigurations'
+                  - 'autoscaling:DescribeTags'
+                  - 'autoscaling:SetDesiredCapacity'
+                  - 'autoscaling:TerminateInstanceInAutoScalingGroup'
+                  - 'ec2:DescribeLaunchTemplateVersions'
+                Resource: '*' 
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+
+
+  s3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Gateway"
+      RouteTableIds:
+        - !Ref 'RouteTablePrivateA'
+        - !Ref 'RouteTablePrivateB'
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcId: !Ref 'VPC'
+
+  LogsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: "True"
+      SubnetIds:
+        - !Ref 'PrivateSubnetA'
+        - !Ref 'PrivateSubnetB'
+      SecurityGroupIds:
+        - !Ref 'ClusterSharedNodeSecurityGroup'
+        - !Ref 'AnsibleSecurityGroup'   
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.logs
+      VpcId: !Ref 'VPC'
+
+  ECRApiEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: "True"
+      SubnetIds:
+        - !Ref 'PrivateSubnetA'
+        - !Ref 'PrivateSubnetB'
+      SecurityGroupIds:
+        - !Ref 'ClusterSharedNodeSecurityGroup'
+        - !Ref 'AnsibleSecurityGroup'  
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ecr.api
+      VpcId: !Ref 'VPC'
+
+  ECREndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: "True"
+      SubnetIds:
+        - !Ref 'PrivateSubnetA'
+        - !Ref 'PrivateSubnetB'
+      SecurityGroupIds:
+        - !Ref 'ClusterSharedNodeSecurityGroup'
+        - !Ref 'AnsibleSecurityGroup'  
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ecr.dkr
+      VpcId: !Ref 'VPC'
+
+  AutoscalingEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: "True"
+      SubnetIds:
+        - !Ref 'PrivateSubnetA'
+        - !Ref 'PrivateSubnetB'
+      SecurityGroupIds:
+        - !Ref 'ClusterSharedNodeSecurityGroup'  
+        - !Ref 'AnsibleSecurityGroup'             
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.autoscaling
+      VpcId: !Ref 'VPC'
+
+  EC2Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: "True"
+      SubnetIds:
+        - !Ref 'PrivateSubnetA'
+        - !Ref 'PrivateSubnetB'
+      SecurityGroupIds:
+        - !Ref 'ClusterSharedNodeSecurityGroup'  
+        - !Ref 'AnsibleSecurityGroup'           
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2
+      VpcId: !Ref 'VPC'  
+         
+  STSEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: "True"
+      SubnetIds:
+        - !Ref 'PrivateSubnetA'
+        - !Ref 'PrivateSubnetB'
+      SecurityGroupIds:
+        - !Ref 'ClusterSharedNodeSecurityGroup'  
+        - !Ref 'AnsibleSecurityGroup'              
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.sts
+      VpcId: !Ref 'VPC'                                 
+
+Outputs:
+
+  JenkinsEC2DNSName:
+    Description: 'Jenkins server DNS Name'
+    Value: !GetAtt 'JenkinsEC2.PublicDnsName'
+
+  AnsibleEC2DNSName:
+    Description: 'Ansible server DNS Name'
+    Value: !GetAtt 'AnsibleEC2.PublicDnsName' 
+
+
+        

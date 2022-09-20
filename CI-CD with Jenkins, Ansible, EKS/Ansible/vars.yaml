@@ -1,0 +1,11 @@
+ecr_image_name: regapp
+ecr_image_tag: v2
+ecr_region: <REGION>
+ecr_account_id: '<YOURACCOUNTID>'
+ecr_url: "{{ ecr_account_id }}.dkr.ecr.{{ ecr_region }}.amazonaws.com"
+path: ~/jenkins
+ecr_login_required: true
+ecr_push: true
+
+namespace: default
+kubeconfig: ~/.kube/config

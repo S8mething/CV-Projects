@@ -1,0 +1,18 @@
+appName: shippingservice
+appImage: <your_app_image_link>/shippingservice
+appVersion: "1.1"
+appReplicas: 2
+containerPort: 50051
+containerEnvVars:
+- name: PORT
+  value: "50051"
+secretName: ecrcred
+livenessPeriodSeconds: 5
+readinessPeriodSeconds: 5
+cpuRequests: 100m
+memRequests: 64Mi
+cpuLimits: 200m
+memLimits: 128Mi
+
+portsName: grpc
+servicePort: 50051

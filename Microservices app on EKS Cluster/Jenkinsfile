@@ -1,0 +1,152 @@
+pipeline {
+    agent any
+    environment {
+        ACCOUNT_ID= ""
+        REGION= ""
+        PROJECT_NAME= ""
+        TAG= ""
+        AWS_CLOUDFORMATION_STACK_NAME= ""
+        DOMAIN_NAME= ""
+        CERTIFICATE_ARN= ""
+        AMAZON_ECR= ""
+        KEYNAME= ""
+        }    
+    stages {
+        stage('Pull-Project') {
+            steps {
+                git branch: 'main',
+                url: 'https://gitlab.com/S8mething/butique-app-public.git'
+            }
+        }    
+        stage('Create-ECR') {
+            steps {
+              withAWS(credentials: 'AWS', region: 'eu-north-1') { 
+                    sh """
+                    chmod +x ECRCreate.sh
+                    ./ECRCreate.sh
+                    """                              
+              }
+            }
+        }
+        stage('Docker-build-and-Push-To-ECR') {
+            steps {
+                withAWS(credentials: 'AWS', region: 'eu-north-1') {    
+                    sh """
+                    chmod +x Docker-build-and-push-to-ecr.sh
+                    aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin "$ACCOUNT_ID".dkr.ecr."$REGION".amazonaws.com
+                    ./Docker-build-and-push-to-ecr.sh
+                    """                                       
+                }
+            }
+        }
+        stage('Cloudformation-Create-Stack') {
+            steps {
+                withAWS(credentials: 'AWS', region: 'eu-north-1') {
+                    sh """
+                    aws cloudformation create-stack --stack-name $AWS_CLOUDFORMATION_STACK_NAME --template-body file://Cloudformation/EKS-Stack.yaml --parameters ParameterKey=KeyName,ParameterValue=$KEYNAME --capabilities CAPABILITY_NAMED_IAM
+                    aws cloudformation wait stack-create-complete --stack-name $AWS_CLOUDFORMATION_STACK_NAME
+                    aws eks update-kubeconfig --name EKS-Boutique
+                    """
+                }
+            }
+        }
+        stage('Create-an-IAM-policy') {
+            steps {
+                withAWS(credentials: 'AWS', region: 'eu-north-1') {
+                    sh """
+                    curl -o iam_policy.json https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.4.3/docs/install/iam_policy.json
+                    aws iam create-policy \
+                    --policy-name AWSLoadBalancerControllerIAMPolicy \
+                    --policy-document file://iam_policy.json
+                    """
+                }
+            }
+        }
+        stage('Create-IAM-OIDC-identity-provider-and-role') {
+            steps {
+                withAWS(credentials: 'AWS', region: 'eu-north-1') {
+                    sh """
+                    eksctl utils associate-iam-oidc-provider --cluster EKS-Boutique --approve
+                    eksctl create iamserviceaccount \
+                    --cluster=EKS-Boutique \
+                    --namespace=kube-system \
+                    --name=aws-load-balancer-controller \
+                    --role-name "AmazonEKSLoadBalancerControllerRole" \
+                    --attach-policy-arn=arn:aws:iam::$ACCOUNT_ID:policy/AWSLoadBalancerControllerIAMPolicy \
+                    --approve
+                    """
+                }
+            }
+        }
+        stage('Install-AWS-LoadBalancer-controller') {
+            steps {
+                 withAWS(credentials: 'AWS', region: 'eu-north-1') {
+                    sh """
+                    helm repo add eks https://aws.github.io/eks-charts
+                    helm repo update
+                    helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+                    -n kube-system \
+                    --set clusterName=EKS-Boutique \
+                    --set serviceAccount.create=false \
+                    --set serviceAccount.name=aws-load-balancer-controller \
+                    --set image.repository=$AMAZON_ECR/amazon/aws-load-balancer-controller
+                    """
+                 }
+            }
+        }
+        stage('Install-Istio') {
+            steps {
+                withAWS(credentials: 'AWS', region: 'eu-north-1') {
+                    sh """
+                    curl -L https://istio.io/downloadIstio | sh -
+                    export PATH="$PATH:$WORKSPACE/istio-1.14.3/bin"
+                    istioctl install \
+                    --set profile=default -y \
+                    --set values.gateways.istio-ingressgateway.type=NodePort \
+                    --set values.pilot.replicaCount=1
+                    """ 
+                    }
+                }
+            }
+        stage('Create-Istio-tls-secret') {
+            steps {
+                    sh """
+                    openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \
+                    -keyout certs/key.pem -out certs/cert.pem -subj "/CN=$DOMAIN_NAME" \
+                    -addext "subjectAltName=DNS:$DOMAIN_NAME"                        
+                    """
+                withAWS(credentials: 'AWS', region: 'eu-north-1') {    
+                    sh """
+                    kubectl create -n istio-system secret generic tls-secret \
+                    --from-file=key=certs/key.pem \
+                    --from-file=cert=certs/cert.pem
+                    """ 
+                    }
+                }
+            }            
+        stage('Istio-Apply-Manifests') {
+            steps {
+                 withAWS(credentials: 'AWS', region: 'eu-north-1') {
+                    sh """
+                    kubectl label namespace default istio-injection=enabled
+                    kubectl apply -f istio-manifests/frontend-gateway.yaml
+                    """
+                    sh """
+                    helm install alb-istio-ingress ./helm/ALB-Istio-TLS \
+                    --set host=$DOMAIN_NAME \
+                    --set certificate_arn=$CERTIFICATE_ARN
+                    """
+                    }
+                }
+            }
+        stage('Helmfile-deploy-boutique-app-and-cluster-autoscaler') {
+            steps {
+                 withAWS(credentials: 'AWS', region: 'eu-north-1') {
+                    sh "helm install -f helm/redis-chart/redis-values.yaml redis  helm/redis-chart"
+                    sh "helmfile sync --set appVersion=$TAG --set appImage="$ACCOUNT_ID".dkr.ecr."$REGION".amazonaws.com/"$PROJECT_NAME"/ "
+                    sh "kubectl apply -f cluster-autoscaler-autodiscover.yaml"
+                    }
+                }
+            }                                                                          
+        }
+    }

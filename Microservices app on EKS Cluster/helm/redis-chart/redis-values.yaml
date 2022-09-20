@@ -1,0 +1,15 @@
+appName: redis-cart
+appImage: redis:alpine
+appVersion: "1.0"
+appReplicas: 1
+containerPort: 6379
+periodSeconds: 5
+cpuRequests: 70m
+memRequests: 200Mi
+cpuLimits: 125m
+memLimits: 256Mi
+
+portsName: tls-redis
+servicePort: 6379
+mountPath: /data
+volumeName: redis-data 

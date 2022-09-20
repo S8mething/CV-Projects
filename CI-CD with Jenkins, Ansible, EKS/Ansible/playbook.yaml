@@ -1,0 +1,92 @@
+---
+- name: Docker build and push image to ECR
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yaml
+  tasks:
+
+    - name: Retrieve an authentication token and authenticate
+      shell: "aws ecr get-login-password --region {{ ecr_region }} | docker login --username AWS --password-stdin {{ ecr_url }}"
+      when: ecr_push or ecr_login_required
+
+    - name: Ensure there's not already an image locally tagged with the ecr_url.
+      docker_image:
+        name: "{{ ecr_url }}/{{ ecr_image_name }}:{{ ecr_image_tag }}"
+        force_tag: true
+        state: absent
+      when: ecr_push
+
+    - name: build container image
+      docker_image:
+        name: "{{ ecr_url }}/{{ ecr_image_name }}:{{ ecr_image_tag }}"
+        build:
+          path: "{{ path }}"
+        state: present
+
+    - name: push image to ECR
+      command: "docker push {{ ecr_url }}/{{ ecr_image_name }}:{{ ecr_image_tag }}"
+
+    - name: Remove image
+      docker_image:
+        state: absent
+        name: "{{ ecr_url }}/{{ ecr_image_name }}"
+        tag: "{{ ecr_image_tag }}"
+
+- name: Deploy on EKS Cluster
+  hosts: localhost
+  vars_files:
+    - vars.yaml
+  tasks:
+    - name: Create a Deployment
+      k8s:
+        state: present
+        kubeconfig: "{{ kubeconfig }}"
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ ecr_image_name }}"
+            namespace: "{{ namespace }}"
+          spec:
+            replicas: 2
+            selector:
+              matchLabels:
+                app: "{{ ecr_image_name }}"
+            template:
+              metadata:
+                labels:
+                  app: "{{ ecr_image_name }}"
+              spec:                        
+                containers:
+                - name: "{{ ecr_image_name }}"
+                  image: "{{ ecr_url }}/{{ ecr_image_name }}:{{ ecr_image_tag }}"
+                  imagePullPolicy: Always
+                  ports:
+                  - containerPort: 8080
+                  resources:
+                    requests:
+                      cpu: 200m
+                      memory: 180Mi
+                    limits:
+                      cpu: 300m
+                      memory: 300Mi
+
+    - name: Create a Service
+      k8s:
+        state: present
+        kubeconfig: "{{ kubeconfig }}"
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: "{{ ecr_image_name }}-external"
+            namespace: "{{ namespace }}"
+          spec:
+            type: LoadBalancer
+            selector:              
+              app: "{{ ecr_image_name }}"
+            ports:
+            - targetPort: 8080
+              name: http
+              port: 80

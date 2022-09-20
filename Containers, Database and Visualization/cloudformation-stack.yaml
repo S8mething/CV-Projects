@@ -1,0 +1,518 @@
+Description:  'Containers, Database and Vizualization'
+
+Parameters:
+
+  ProjectName:
+    Description: 'Project name'
+    Type: 'String'
+    Default: 'Containers, Database and Vizualization'
+
+  AdminMySQLName:
+    Description: 'Administrator RDS Database Name'
+    Type: 'String'
+    Default: 'Admin'
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: 'must begin with a letter and contain only alphanumeric characters.'
+
+  AmiECSId:
+      Description: AMI for ECS Instances. Linux 2
+      Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+      Default: '/aws/service/ecs/optimized-ami/amazon-linux-2/recommended/image_id'
+
+  MySQLAdminPassParameterName:
+    Description: 'Parameter name "MYSQL_ADMIN_PASSWORD". Parameter which contains Admin Password for RDS Database.'
+    Type: 'String'
+    Default: 'MYSQL_ADMIN_PASSWORD'
+
+  MyIp:
+    Description : The IP address range that can be used to SSH, HTTP access to the ECS Instances
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: '0.0.0.0/0'
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: 'Must be a valid IP CIDR range of the form x.x.x.x/x'
+
+  DBInstanceType:
+    Description: RDS Instance Type  
+    Type: String
+    Default: db.t3.micro
+    AllowedValues:
+      - db.t3.micro
+      - db.t2.micro
+
+  ECSInstanceType:                                  
+    Description: ECS Instance Type  
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+      - t3.micro
+      - t2.micro
+
+  KeyNameECSEC2:
+    Description: The EC2 Key Pair allow SSH access to the ECS instances
+    Type: AWS::EC2::KeyPair::KeyName
+
+  LogGroupName:
+    Description: 'LogGroup Name'
+    Type: 'String'   
+    
+Resources:
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref 'LogGroupName'
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.16.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-VPC'
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      MapPublicIpOnLaunch: True
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.16.0.0/24
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-Public-Subnet-A'
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.16.16.0/24
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-Private-Subnet-A'
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      MapPublicIpOnLaunch: True
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 10.16.32.0/24
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-Public-Subnet-B'
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 10.16.48.0/24
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-Private-Subnet-B'
+
+  RouteTablePublic:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-Public-Route-Table'
+
+  RouteTablePrivate:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-Private-Route-Table'          
+
+  IGWRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref 'RouteTablePublic'
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref 'InternetGateway'
+
+  RouteTableAssocPublicA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PublicSubnetA'
+      RouteTableId: !Ref 'RouteTablePublic'
+
+  RouteTableAssocPublicB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PublicSubnetB'
+      RouteTableId: !Ref 'RouteTablePublic'
+
+  RouteTableAssocPrivateA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PrivateSubnetA'
+      RouteTableId: !Ref 'RouteTablePrivate'
+
+  RouteTableAssocPrivateB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PrivateSubnetB'
+      RouteTableId: !Ref 'RouteTablePrivate'             
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-IGW'
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref 'VPC'
+      InternetGatewayId: !Ref 'InternetGateway'
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: 'RDS Subnet Group'
+      SubnetIds:
+        - !Ref 'PrivateSubnetA'
+        - !Ref 'PrivateSubnetB'
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-RDS-Subnet-Group'
+
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: 'EFS SG'
+      GroupDescription: 'EFS Security Group'
+      VpcId: !Ref 'VPC'
+      SecurityGroupIngress:
+        - Description: 'Allow ECS containers access to EFS'
+          IpProtocol: 'tcp'
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref 'ECSInstanceGroup'      
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-EFS-Security-Group'          
+
+  EFS:
+    Type: AWS::EFS::FileSystem
+    DependsOn: 'EFSSecurityGroup'
+    Properties:
+      BackupPolicy:
+        Status: ENABLED
+      LifecyclePolicies:
+        - TransitionToIA: AFTER_30_DAYS
+        - TransitionToPrimaryStorageClass: AFTER_1_ACCESS        
+      Encrypted: True
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-EFS'
+      PerformanceMode: 'generalPurpose' 
+      ThroughputMode: 'bursting'
+
+  EFSMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties: 
+      FileSystemId: !Ref 'EFS'
+      SubnetId: !Ref 'PublicSubnetA'
+      SecurityGroups: 
+        - !Ref 'EFSSecurityGroup'
+
+  EFSMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref 'EFS'
+      SubnetId: !Ref 'PublicSubnetB'
+      SecurityGroups:
+        - !Ref 'EFSSecurityGroup'  
+
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: 'DB instance SG'
+      GroupDescription: 'Database Security Group'
+      VpcId: !Ref 'VPC'
+      SecurityGroupIngress:
+        - Description: 'Allow access to petclinic container to ECS'
+          IpProtocol: 'tcp'
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref 'ECSInstanceGroup'      
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-RDS-MySQL-Security-Group'
+
+  ECSInstanceGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: 'ECS Security Group'
+      GroupDescription: 'ECS Security Group'
+      VpcId: !Ref 'VPC'
+      SecurityGroupIngress:
+        - Description: 'Allow access to phpMyAdmin Container'
+          IpProtocol: 'tcp'
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: !Ref 'MyIp'  
+        - Description: 'Allow access to Metabase Container'
+          IpProtocol: 'tcp'
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: !Ref 'MyIp'            
+        - Description: 'Allow SSH access to ECS Instance'
+          IpProtocol: 'tcp'
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref 'MyIp'
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-ECS-Instances-Security-Group'              
+
+  rdsDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: 20
+      DBInstanceClass: !Ref 'DBInstanceType'
+      AllowMajorVersionUpgrade: 'false'
+      AutoMinorVersionUpgrade: 'false'
+      DBInstanceIdentifier: 'rds-mysql-db' 
+      DBName: 'rds_mysql_db'
+      Engine: 'mysql'
+      MasterUsername: !Ref 'AdminMySQLName'
+      MasterUserPassword: !Join ["", [ "{{", "resolve:ssm-secure:", !Ref MySQLAdminPassParameterName, "}}" ]]
+      MultiAZ: 'false'
+      Port: 3306
+      PubliclyAccessible: 'false'
+      StorageEncrypted: 'false'
+      StorageType: 'gp2'
+      DBSubnetGroupName: !Ref 'DBSubnetGroup'
+      VPCSecurityGroups:
+        - !Ref 'DBSecurityGroup'
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-RDS-MySQL'
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    DependsOn:
+      - EcsAutoscalingGroup
+      - EcsInstanceLc
+    Properties:
+      ClusterName: !Sub '${AWS::StackName}-Cluster'
+
+  EcsInstanceLc:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      LaunchConfigurationName: 'ECS'
+      AssociatePublicIpAddress: 'True'
+      IamInstanceProfile: 'ecsInstanceRole'
+      ImageId: !Ref AmiECSId
+      EbsOptimized: 'false'
+      InstanceMonitoring: 'false'
+      InstanceType: !Ref 'ECSInstanceType'
+      KeyName: !Ref 'KeyNameECSEC2' 
+      SecurityGroups:
+        - !Ref 'ECSInstanceGroup'
+      BlockDeviceMappings: 
+        - DeviceName: /dev/sda1
+          Ebs: 
+            VolumeSize: '30'
+            VolumeType: 'gp2'
+      UserData: 
+        Fn::Base64: !Sub |
+            #!/bin/bash -ex
+            echo ECS_CLUSTER=${AWS::StackName}-Cluster >> /etc/ecs/ecs.config
+
+  EcsAutoscalingGroup: 
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: 'ECS ASG'
+      LaunchConfigurationName: !Ref 'EcsInstanceLc'
+      MaxSize: 2
+      MinSize: 1
+      DesiredCapacity: 2
+      VPCZoneIdentifier: 
+        - !Ref 'PublicSubnetA'
+        - !Ref 'PublicSubnetB'
+      Tags: 
+        - Key: 'Name'
+          Value: 'ECS'
+          PropagateAtLaunch: 'true'
+
+  PhpMyAdminTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn:
+      - 'ECSTaskExecutionRole'
+      - 'rdsDBInstance'        
+    Properties:
+      Family: 'phpmyadmin'
+      RequiresCompatibilities:
+        - 'EC2'
+      ContainerDefinitions: 
+        -
+          Name: 'phpmyadmin'
+          Image: 'docker.io/phpmyadmin:latest'
+          PortMappings: 
+          - 
+            ContainerPort: 80
+            HostPort: 8080
+          LogConfiguration: 
+            LogDriver: 'awslogs'
+            Options: 
+              awslogs-group : !Ref 'LogGroupName'
+              awslogs-region : !Sub '${AWS::Region}'
+              awslogs-stream-prefix : 'ecs'
+          Environment:
+            - Name: 'PMA_HOST'
+              Value: !GetAtt 'rdsDBInstance.Endpoint.Address'
+            - Name: 'PMA_PORT'
+              Value: 3306
+      Cpu: 500
+      Memory: 180
+      TaskRoleArn: !Ref 'ECSTaskExecutionRole'
+      ExecutionRoleArn: !Ref 'ECSTaskExecutionRole'
+
+  ECSServiceForPhpMyAdminTask:
+    Type: AWS::ECS::Service
+    DependsOn: 
+      - 'PhpMyAdminTaskDefinition'
+      - 'ECSCluster'  
+    Properties:
+      Cluster: !Ref 'ECSCluster'    
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true       
+        MaximumPercent: 100
+        MinimumHealthyPercent: 50
+      DeploymentController:
+        Type: 'ECS'
+      DesiredCount: 1
+      EnableECSManagedTags: true
+      EnableExecuteCommand: false
+      LaunchType: 'EC2'
+      PlacementStrategies:
+        - Field: 'instanceId'
+          Type: 'spread'
+        - Field: 'attribute:ecs.availability-zone'
+          Type: 'spread'  
+      ServiceName: 'PhpMyAdmin-service'
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-Service'
+      TaskDefinition: !Ref 'PhpMyAdminTaskDefinition'
+
+  MetabaseTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn:
+      - 'ECSTaskExecutionRole'
+      - 'rdsDBInstance'        
+    Properties:
+      Family: 'Metabase'
+      RequiresCompatibilities:
+        - 'EC2'
+      ContainerDefinitions: 
+        -
+          Name: 'Metabase'
+          Image: 'docker.io/metabase/metabase:latest'
+          PortMappings: 
+          - 
+            ContainerPort: 3000
+            HostPort: 3000
+          LogConfiguration: 
+            LogDriver: 'awslogs'
+            Options: 
+              awslogs-group : !Ref 'LogGroupName'
+              awslogs-region : !Sub '${AWS::Region}'
+              awslogs-stream-prefix : 'ecs'
+          Environment:
+            - Name: 'MB_DB_FILE'
+              Value: '/mnt/metabase.db'
+          MountPoints:
+              - SourceVolume: 'EFS-Volume'
+                ContainerPath: '/mnt'
+                ReadOnly: false
+      Volumes:
+        - Name: 'EFS-Volume'      
+          EFSVolumeConfiguration: 
+            FilesystemId: !Ref 'EFS'
+            RootDirectory: '/'
+      Cpu: 1024
+      Memory: 700
+      TaskRoleArn: !Ref 'ECSTaskExecutionRole'
+      ExecutionRoleArn: !Ref 'ECSTaskExecutionRole'
+
+  ECSServiceForMetabaseTask:
+    Type: AWS::ECS::Service
+    DependsOn: 
+      - 'PhpMyAdminTaskDefinition'
+      - 'ECSCluster'  
+    Properties:
+      Cluster: !Ref 'ECSCluster'    
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true       
+        MaximumPercent: 100
+        MinimumHealthyPercent: 50
+      DeploymentController:
+        Type: 'ECS'
+      DesiredCount: 1
+      EnableECSManagedTags: true
+      EnableExecuteCommand: false
+      LaunchType: 'EC2'
+      PlacementStrategies:
+        - Field: 'instanceId'
+          Type: 'spread'
+        - Field: 'attribute:ecs.availability-zone'
+          Type: 'spread'  
+      ServiceName: 'Metabase-service'
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-Service'
+      TaskDefinition: !Ref 'MetabaseTaskDefinition'      
+
+  ECSTaskExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-Cluster-ECSTask-Role'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - ecs-tasks.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: !Sub '${AWS::StackName}-ECSTask-Policy'
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - 'ecr:GetAuthorizationToken'
+                  - 'ecr:BatchCheckLayerAvailability'
+                  - 'ecr:GetDownloadUrlForLayer'
+                  - 'ecr:BatchGetImage'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'          
+
+Outputs:
+  rdsEndpoint:
+    Description: 'RDS endpoint'
+    Value: !GetAtt 'rdsDBInstance.Endpoint.Address'

@@ -1,0 +1,18 @@
+appName: cartservice
+appImage: <your_app_image_link>
+appVersion: "1.1"
+appReplicas: 2
+containerPort: 7070
+containerEnvVars:
+- name: REDIS_ADDR
+  value: "redis-cart:6379"
+secretName: ecrcred
+livenessPeriodSeconds: 15
+readinessPeriodSeconds: 15
+cpuRequests: 200m
+memRequests: 64Mi
+cpuLimits: 300m
+memLimits: 128Mi
+
+portsName: grpc
+servicePort: 7070

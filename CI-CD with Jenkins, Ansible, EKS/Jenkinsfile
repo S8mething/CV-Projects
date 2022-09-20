@@ -1,0 +1,57 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('Pull Project') {
+            steps {
+                git branch: 'main',
+                url: 'https://gitlab.com/S8mething/reg-app-public.git'
+            }
+        }
+        
+        stage('Build Project') {
+            steps {
+                sh '''
+                chmod +x mvnw
+                ./mvnw clean package
+                '''
+            }
+        }
+
+        stage('Send Files to Ansible') {
+            steps {
+                script {
+                    sshPublisher(publishers: [sshPublisherDesc(configName: 'Ansible',
+                    transfers: [
+                        sshTransfer(
+                            remoteDirectory: '/jenkins',
+                            sourceFiles: 'Dockerfile'),
+                        sshTransfer(
+                            removePrefix: 'Ansible',
+                            remoteDirectory: '/ansible',
+                            sourceFiles: 'Ansible/*'),                            
+                        sshTransfer(
+                            remoteDirectory: '/jenkins/webapp',
+                            removePrefix: 'webapp/target',
+                            sourceFiles: 'webapp/target/webapp.war')],
+                            usePromotionTimestamp: false,
+                            useWorkspaceInPromotion: false,
+                            verbose: false
+                    )])
+                }
+            }
+        }
+        
+        stage('Ansible') {
+            steps {
+                sh 'ansible-playbook ~/ansible/playbook.yaml -vvvv'
+            }
+            agent {
+                label {
+                label 'Ansible'
+                retries 5
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,287 @@
+Description: AWS to Azure VPN with BGP Routing
+Parameters:
+  
+  ProjectName:
+    Description: Project name
+    Type: 'String'
+    Default: 'AWS-to-Azure-BGP-VPN'
+
+  AmazonLinux2Ami:
+    Description: Latest Amazon Linux 2 Ami
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+
+  AmazonWindowsServerAmi:       
+    Description: Latest Amazon Windows Server Ami
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-windows-latest/Windows_Server-2019-English-Full-Base'
+
+Resources:
+
+  AWSVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 192.168.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: NewVPC   
+          
+  AWSSubnetPrivateA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AWSVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 192.168.0.0/24
+      Tags:
+        - Key: Name
+          Value: private-A
+          
+  AWSSubnetPrivateB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AWSVPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: 192.168.16.0/24
+      Tags:
+        - Key: Name
+          Value: private-B
+           
+  AWSCustomRT: 
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref AWSVPC
+      Tags:
+      - Key: Name
+        Value: NewVPC-RT     
+        
+  AWSTGWDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: "AWSTGWVPC"
+    Properties:
+      TransitGatewayId: !Ref AWSTGW
+      RouteTableId: !Ref AWSCustomRT
+      DestinationCidrBlock: "0.0.0.0/0"
+      
+  AWSRTAssociationPrivateA:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref AWSSubnetPrivateA
+      RouteTableId:
+        Ref: AWSCustomRT
+        
+  AWSRTAssociationPrivateB:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref AWSSubnetPrivateB
+      RouteTableId:
+        Ref: AWSCustomRT    
+        
+  AWSInstanceSGLinux:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref AWSVPC
+      GroupDescription: Default SG for Linux-Instances
+      SecurityGroupIngress: 
+        - Description: 'Allow SSH IPv4 IN'
+          IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: '10.1.0.0/16'
+        - Description: 'Allow ICMP IPv4 IN'
+          IpProtocol: icmp
+          FromPort: '-1'
+          ToPort: '-1'
+          CidrIp: '10.1.0.0/16' 
+           
+  AWSInstanceSGWindows:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref AWSVPC
+      GroupDescription: Default SG for Windows-Instances
+      SecurityGroupIngress: 
+        - Description: 'Allow RDP IPv4 IN'
+          IpProtocol: tcp
+          FromPort: '3389'
+          ToPort: '3389'
+          CidrIp: '10.1.0.0/16'
+        - Description: 'Allow ICMP IPv4 IN'
+          IpProtocol: icmp
+          FromPort: '-1'
+          ToPort: '-1'
+          CidrIp: '10.1.0.0/16'                   
+          
+  AWSInstanceSGSelfReferenceRuleWindows:
+    Type: "AWS::EC2::SecurityGroupIngress"
+    Properties:
+      GroupId: !Ref AWSInstanceSGLinux
+      IpProtocol: '-1'
+      SourceSecurityGroupId: !Ref AWSInstanceSGLinux 
+
+  AWSInstanceSGSelfReferenceRuleLinux:
+    Type: "AWS::EC2::SecurityGroupIngress"
+    Properties:      
+      GroupId: !Ref AWSInstanceSGWindows
+      IpProtocol: '-1'
+      SourceSecurityGroupId: !Ref AWSInstanceSGWindows
+
+  AWSEC2WindowsA:
+    Type: AWS::EC2::Instance   
+    Properties:
+      InstanceType: "t3.micro"  
+      ImageId: !Ref AmazonLinux2Ami
+      IamInstanceProfile: !Ref AWSEC2InstanceProfile
+      SubnetId: !Ref AWSSubnetPrivateA
+      SecurityGroupIds: 
+        - !Ref AWSInstanceSGWindows
+      Tags:
+        - Key: Name
+          Value: EC2-A-Windows
+      
+  AWSEC2WindowsB:
+    Type: AWS::EC2::Instance   
+    Properties:
+      InstanceType: "t3.micro"  
+      ImageId: !Ref AmazonLinux2Ami        
+      IamInstanceProfile: !Ref AWSEC2InstanceProfile
+      SubnetId: !Ref AWSSubnetPrivateB
+      SecurityGroupIds: 
+        - !Ref AWSInstanceSGWindows
+      Tags:
+        - Key: Name
+          Value: EC2-B-Windows    
+       
+  AWSEC2LinuxA:
+    Type: AWS::EC2::Instance
+    DependsOn: 
+      - AWSssminterfaceendpoint
+      - AWSssmmessagesinterfaceendpoint
+    Properties:
+      InstanceType: "t3.micro"
+      ImageId: !Ref AmazonWindowsServerAmi
+      IamInstanceProfile: !Ref AWSEC2InstanceProfile
+      SubnetId: !Ref AWSSubnetPrivateA
+      SecurityGroupIds: 
+        - !Ref AWSInstanceSGLinux
+      Tags:
+        - Key: Name
+          Value: EC2-A-Linux
+          
+  AWSEC2LinuxB:
+    Type: AWS::EC2::Instance
+    DependsOn: 
+      - AWSssminterfaceendpoint
+      - AWSssmmessagesinterfaceendpoint
+    Properties:
+      InstanceType: "t3.micro"
+      ImageId: !Ref AmazonWindowsServerAmi
+      IamInstanceProfile: !Ref AWSEC2InstanceProfile
+      SubnetId: !Ref AWSSubnetPrivateB
+      SecurityGroupIds: 
+        - !Ref AWSInstanceSGLinux
+      Tags:
+        - Key: Name
+          Value: EC2-B-Linux  
+              
+  AWSEC2Role:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: SessionManagerRole
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - 'ssm:DescribeAssociation'
+                  - 'ssm:GetDeployablePatchSnapshotForInstance'
+                  - 'ssm:GetDocument'
+                  - 'ssm:DescribeDocument'
+                  - 'ssm:GetManifest'
+                  - 'ssm:GetParameter'
+                  - 'ssm:GetParameters'
+                  - 'ssm:ListAssociations'
+                  - 'ssm:ListInstanceAssociations'
+                  - 'ssm:PutInventory'
+                  - 'ssm:PutComplianceItems'
+                  - 'ssm:PutConfigurePackageResult'
+                  - 'ssm:UpdateAssociationStatus'
+                  - 'ssm:UpdateInstanceAssociationStatus'
+                  - 'ssm:UpdateInstanceInformation'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'ssmmessages:CreateControlChannel'
+                  - 'ssmmessages:CreateDataChannel'
+                  - 'ssmmessages:OpenControlChannel'
+                  - 'ssmmessages:OpenDataChannel' 
+                Resource: '*'
+                
+  AWSEC2InstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: /
+      Roles:
+        - !Ref AWSEC2Role 
+                
+  AWSssminterfaceendpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: "True"
+      SubnetIds:
+        - !Ref AWSSubnetPrivateA
+        - !Ref AWSSubnetPrivateB
+      SecurityGroupIds:
+        - !Ref AWSInstanceSGLinux
+        - !Ref AWSInstanceSGWindows
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      VpcId: !Ref AWSVPC
+     
+  AWSssmmessagesinterfaceendpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: "True"
+      SubnetIds:
+        - !Ref AWSSubnetPrivateA
+        - !Ref AWSSubnetPrivateB
+      SecurityGroupIds:
+        - !Ref AWSInstanceSGLinux
+        - !Ref AWSInstanceSGWindows
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+      VpcId: !Ref AWSVPC
+      
+  AWSTGW:
+    Type: "AWS::EC2::TransitGateway"
+    Properties:
+      AmazonSideAsn: 64512
+      Description: "TGW"
+      DefaultRouteTableAssociation: "enable"
+      DnsSupport: "enable"
+      VpnEcmpSupport: "enable"
+      
+  AWSTGWVPC:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties: 
+      SubnetIds: 
+        - !Ref AWSSubnetPrivateA
+        - !Ref AWSSubnetPrivateB
+      Tags: 
+        - Key: Name
+          Value: NewVPC-TGW-Attachment
+      TransitGatewayId: !Ref AWSTGW
+      VpcId: !Ref AWSVPC                   
+      
+      

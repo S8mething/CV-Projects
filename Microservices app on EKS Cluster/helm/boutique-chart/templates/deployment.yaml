@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.appName }}
+spec:
+  replicas: {{ .Values.appReplicas }}
+  selector:
+    matchLabels:
+      app: {{ .Values.appName }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.appName }}
+      {{- if eq .Values.appName "frontend" }}
+      annotations:
+        sidecar.istio.io/rewriteAppHTTPProbers: "true"
+      {{- end }}            
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:            
+              - key: app
+                operator: In
+                values:
+                - {{ .Values.appName }}
+            topologyKey: "topology.kubernetes.io/zone"                         
+      containers:
+      - name: {{ .Values.appName }}
+        image: "{{ .Values.appImage }}/{{ .Values.appName }}:{{ .Values.appVersion }}"
+        ports:
+        - containerPort: {{ .Values.containerPort }}
+        env:
+        {{- range .Values.containerEnvVars }}
+        - name: {{ .name }}
+          value: {{ .value | quote }}
+        {{- end }}
+        {{- if eq .Values.appName "frontend" }}        
+        readinessProbe:
+          initialDelaySeconds: 10
+          httpGet:
+            path: "/_healthz"
+            port: 8080
+            httpHeaders:
+            - name: "Cookie"
+              value: "shop_session-id=x-readiness-probe"
+        livenessProbe:
+          initialDelaySeconds: 10
+          httpGet:
+            path: "/_healthz"
+            port: 8080
+            httpHeaders:
+            - name: "Cookie"
+              value: "shop_session-id=x-liveness-probe"
+        {{- end }}              
+        {{- if ne .Values.appName "frontend" }}
+        readinessProbe:
+          initialDelaySeconds: 20
+          periodSeconds: {{ .Values.readinessPeriodSeconds }}
+          exec:
+            command:
+              - /bin/grpc_health_probe
+              - -addr=:{{ .Values.containerPort }}
+        livenessProbe:
+          initialDelaySeconds: 20
+          periodSeconds: {{ .Values.livenessPeriodSeconds }}
+          exec:
+            command: 
+              - /bin/grpc_health_probe
+              - -addr=:{{ .Values.containerPort }}
+        {{- end }}     
+        resources:
+          requests:
+            cpu:  {{ .Values.cpuRequests }}
+            memory:  {{ .Values.memRequests }}
+          limits:
+            cpu:  {{ .Values.cpuLimits }}
+            memory: {{ .Values.memLimits }} 
+      imagePullSecrets:
+        - name: {{ .Values.secretName }}
+---

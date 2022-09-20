@@ -1,0 +1,18 @@
+appName: emailservice
+appImage: <your_app_image_link>/emailservice
+appVersion: "1.1"
+appReplicas: 2
+containerPort: 8080
+containerEnvVars:
+- name: PORT
+  value: "8080"
+secretName: ecrcred
+livenessPeriodSeconds: 5
+readinessPeriodSeconds: 5
+cpuRequests: 100m
+memRequests: 64Mi
+cpuLimits: 200m
+memLimits: 128Mi
+
+portsName: grpc
+servicePort: 8080

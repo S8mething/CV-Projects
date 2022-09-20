@@ -1,0 +1,55 @@
+releases:
+
+  - name: adservice
+    chart: helm/boutique-chart
+    values:
+      - helm/boutique-chart/values/adservice-values.yaml
+
+  - name: checkoutservice
+    chart: helm/boutique-chart
+    values:
+      - helm/boutique-chart/values/checkoutservice-values.yaml
+
+  - name: emailservice
+    chart: helm/boutique-chart
+    values:
+      - helm/boutique-chart/values/emailservice-values.yaml
+
+  - name: productcatalogservice
+    chart: helm/boutique-chart
+    values:
+      - helm/boutique-chart/values/productcatalogservice-values.yaml
+       
+  - name: cartservice
+    chart: helm/boutique-chart
+    values:
+      - helm/boutique-chart/values/cartservice-values.yaml        
+
+  - name: currencyservice
+    chart: helm/boutique-chart
+    values:
+      - helm/boutique-chart/values/currencyservice-values.yaml   
+
+  - name: frontend
+    chart: helm/boutique-chart
+    values:
+      - helm/boutique-chart/values/frontend-values.yaml  
+
+  - name: paymentservice
+    chart: helm/boutique-chart
+    values:
+      - helm/boutique-chart/values/paymentservice-values.yaml
+
+  - name: recommendationservice
+    chart: helm/boutique-chart
+    values:
+      - helm/boutique-chart/values/recommendationservice-values.yaml
+
+  - name: shippingservice
+    chart: helm/boutique-chart
+    values:
+      - helm/boutique-chart/values/shippingservice-values.yaml   
+                                                     
+      
+
+  

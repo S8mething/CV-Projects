@@ -1,0 +1,60 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('Pull-Project') {
+            steps {
+                git branch: 'main',
+                url: 'https://gitlab.com/S8mething/spring-petclinic-public.git'
+            }
+        }
+        
+        stage('Increment-Project-Add-env-var') {
+            steps {
+                script {
+                def matcher = readFile('pom.xml') =~ '<version>(.+)</version>'
+                def version = matcher[0][1]
+                env.VERSION= "$version"    
+                }
+            }
+        }            
+
+        stage('Build-Project') {
+            steps {
+               sh './mvnw clean package'
+            }
+            post {
+                success {
+                   archiveArtifacts 'target/*.jar'
+                }
+            }            
+        }
+
+         stage('Dockerize-Project-to-ECR') {
+            steps {
+               sh 'aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ACCOUNT_NUMBER.dkr.ecr.$REGION.amazonaws.com'
+               sh 'docker build -t $ACCOUNT_NUMBER.dkr.ecr.$REGION.amazonaws.com/$IMAGE_NAME:"$VERSION" .'
+               sh 'docker push $ACCOUNT_NUMBER.dkr.ecr.$REGION.amazonaws.com/$IMAGE_NAME:"$VERSION"'                                       
+            }
+        }
+        
+        stage('Update-TaskDefinition-and-Service') {
+            environment {
+                TASK_NAME= 'petclinic'
+                SERVICE_NAME= 'Petclinic-service'
+                IMAGE_NAME= 'petclinic'
+                CLUSTER_NAME= 'Petclinic'
+                REGION= <YOURSREGION>
+                ACCOUNT_NUMBER= <YOURSACCNUMBER>
+                DESIRED_COUNT= '2'
+            }
+            steps {
+               sh 'rm -f task-def.sh'
+               sh 'sed "s|taskname|$TASK_NAME|; s|servicename|$SERVICE_NAME|; s|imagename|$IMAGE_NAME|; s|clustername|$CLUSTER_NAME|; s|Region|$REGION|; s|Version|$VERSION|; s|accnumber|$ACCOUNT_NUMBER|; s|desiredcount|$DESIRED_COUNT|" task-blueprint.sh >> task-def.sh '
+               sh 'chmod +x task-def.sh'
+               sh './task-def.sh'
+               sh 'rm -f task-def.sh'
+            }
+        }
+    }
+}

@@ -1,0 +1,177 @@
+Description:  'Web-project'
+
+Parameters:
+
+  ProjectName:
+    Description: 'Project name'
+    Type: 'String'
+    Default: 'Web-project'
+
+  KeyName:
+    Description: The EC2 Key Pair to allow SSH access to the instances
+    Type: AWS::EC2::KeyPair::KeyName
+
+  MyIp:
+    Description : The IP address range that can be used to SSH to the EC2 instances
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: '0.0.0.0/0'
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: 'Must be a valid IP CIDR range of the form x.x.x.x/x'
+  
+  AmiId:
+    Description: AMI for EC2 Instance. Ubuntu 20.04
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/canonical/ubuntu/server/20.04/stable/20220610/amd64/hvm/ebs-gp2/ami-id'     
+
+  InstanceTypeParameter:
+    Description: Instance Type  
+    Type: String
+    Default: t3.micro
+    AllowedValues:
+      - t3.micro
+      - t2.micro    
+
+Resources:
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.16.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-VPC'
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.16.0.0/24
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-PublicSubnet'
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.16.16.0/24
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-Private-Subnet-A'
+
+  RouteTablePublic:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-Public-Route-Table'
+
+  RouteTablePrivate:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-Private-Route-Table'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: 'Name'
+          Value: '${AWS::StackName}-IGW'
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref 'VPC'
+      InternetGatewayId: !Ref 'InternetGateway'                     
+
+  IGWRoutePublic:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref 'RouteTablePublic'
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref 'InternetGateway'
+
+  RouteTableAssocPublic:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PublicSubnet'
+      RouteTableId: !Ref 'RouteTablePublic'
+
+  RouteTableAssocPrivate:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PrivateSubnet'
+      RouteTableId: !Ref 'RouteTablePrivate'
+
+  ElasticIP:
+    DependsOn:
+    - AttachGateway
+    - WebEC2
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref WebEC2
+
+  WebEC2:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - WebSecurityGroup
+    Properties:
+      ImageId: !Ref 'AmiId'
+      InstanceType: !Ref 'InstanceTypeParameter'
+      SubnetId: !Ref 'PublicSubnet'
+      KeyName: !Ref 'KeyName'
+      SecurityGroupIds: 
+        - !Ref 'WebSecurityGroup'            
+      Tags:
+        - Key: Name
+          Value: Web-Server      
+      UserData:
+          Fn::Base64:
+            !Sub |
+              #!/bin/bash
+              apt-get -y update
+              apt-get -y upgrade
+              apt-get -y install docker.io
+              groupadd docker
+              usermod -aG docker ubuntu
+              docker run --name website -p 80:80 --restart always -d nginx
+
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Web server
+      GroupName: Webserver-SG
+      SecurityGroupIngress:
+        - Description: 'Allow SSH to EC2'
+          IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: !Ref MyIp
+        - Description: 'Allow ICMP to EC2'
+          IpProtocol: icmp
+          FromPort: '-1'
+          ToPort: '-1'
+          CidrIp: !Ref MyIp        
+        - Description: 'Allow HTTP in'
+          IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0          
+      VpcId: !Ref VPC
+
+Outputs:
+  StaticIP:
+    Description: 'StaticIP'
+    Value: !GetAtt 'WebEC2.PublicIp'
+

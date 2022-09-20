@@ -1,0 +1,138 @@
+Description:  Python scripts testing stack
+
+Mappings: 
+  RegionMap: 
+    eu-north-1: 
+      x64Ubuntu20: "ami-012ae45a4a2d92750"
+      InstanceType: 't3.micro'
+    eu-west-3: 
+      x64Ubuntu20: "ami-0f7559f51d3a22167"
+      InstanceType: 't2.micro'
+
+Parameters:
+
+  ProjectName:
+    Description: 'Project Name'
+    Type: 'String'
+    Default: 'Python-scripts-testing-stack'
+
+  MyIp:
+    Description: Your IP for ssh connection EC2 Instances
+    Type: String
+    Default: '0.0.0.0/0'    
+
+Resources:
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.16.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::Region}-${AWS::StackName}-VPC'
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.16.0.0/24
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-PublicSubnet'
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.16.16.0/24
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-PrivateSubnet'
+
+  RouteTablePublic:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-Public-Route-Table'
+
+  RouteTablePrivate:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-Private-Route-Table'          
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}-IGW'          
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref 'VPC'
+      InternetGatewayId: !Ref 'InternetGateway'  
+
+  IGWRoutePublic:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref 'RouteTablePublic'
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref 'InternetGateway'
+
+  RouteTableAssocPubA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PublicSubnet'
+      RouteTableId: !Ref 'RouteTablePublic'
+
+  RouteTableAssocPrivB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PrivateSubnet'
+      RouteTableId: !Ref 'RouteTablePrivate'
+
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EC2-Instances
+      GroupName: EC2-SG
+      SecurityGroupIngress:
+        - Description: 'Allow SSH IPv4 IN'
+          IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: !Ref MyIp          
+      VpcId: !Ref VPC                                   
+
+  EC2Instance: 
+    Type: "AWS::EC2::Instance"
+    DependsOn:
+      - PrivateSubnet
+      - EC2SecurityGroup
+    Properties: 
+      ImageId: !FindInMap
+        - RegionMap
+        - !Ref 'AWS::Region'
+        - x64Ubuntu20
+      InstanceType: !FindInMap
+        - RegionMap
+        - !Ref 'AWS::Region'
+        - InstanceType
+      SubnetId: !GetAtt 'PrivateSubnet.SubnetId'
+      SecurityGroupIds: 
+        - !GetAtt 'EC2SecurityGroup.GroupId'
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::Region}-EC2-Instance'
+         
