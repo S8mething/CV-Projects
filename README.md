@@ -1,3 +1,6 @@
+**Greetings, my name is Alexander, and this is a page with various projects that I worked with while learning various DevOps and Cloud tools and methods. Most of the applications were found by me on the Internet. I deployed them in my own way, made small improvements. Each project has a description of how I did it, this is not a complete guide, but only a "way of doing". Thank you for your attention to my cv, have a good day :)**
+
+
 ### [Nextcloud](https://github.com/S8mething/CV-Projects/tree/main/Nextcloud)
 #### Tools:
 > Docker,
