@@ -18,7 +18,7 @@
 
 ###### AWS:
 
-- Create CloudFormation Stack and upload template:
+- Create CloudFormation Stack and upload template(or use terraform):
 
 ![1](https://user-images.githubusercontent.com/99510843/178160441-290f595e-fdfa-4353-ba9c-cbfad505d6d2.jpeg)
 
