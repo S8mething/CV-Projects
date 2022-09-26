@@ -12,6 +12,7 @@
 - AWS Session Manager
 - Azure Virtual Machine
 - Azure Virtual Network Gateway
+- Terraform
 
 
 ## Steps:
