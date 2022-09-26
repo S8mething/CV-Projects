@@ -112,14 +112,14 @@ Resources:
           ToPort: '-1'
           CidrIp: '10.1.0.0/16'                   
           
-  AWSInstanceSGSelfReferenceRuleWindows:
+  AWSInstanceSGSelfReferenceRuleLinux:
     Type: "AWS::EC2::SecurityGroupIngress"
     Properties:
       GroupId: !Ref AWSInstanceSGLinux
       IpProtocol: '-1'
       SourceSecurityGroupId: !Ref AWSInstanceSGLinux 
 
-  AWSInstanceSGSelfReferenceRuleLinux:
+  AWSInstanceSGSelfReferenceRuleWindows:
     Type: "AWS::EC2::SecurityGroupIngress"
     Properties:      
       GroupId: !Ref AWSInstanceSGWindows
@@ -127,7 +127,10 @@ Resources:
       SourceSecurityGroupId: !Ref AWSInstanceSGWindows
 
   AWSEC2WindowsA:
-    Type: AWS::EC2::Instance   
+    Type: AWS::EC2::Instance
+    DependsOn: 
+      - AWSssminterfaceendpoint
+      - AWSssmmessagesinterfaceendpoint       
     Properties:
       InstanceType: "t3.micro"  
       ImageId: !Ref AmazonLinux2Ami
@@ -140,7 +143,10 @@ Resources:
           Value: EC2-A-Windows
       
   AWSEC2WindowsB:
-    Type: AWS::EC2::Instance   
+    Type: AWS::EC2::Instance 
+    DependsOn: 
+      - AWSssminterfaceendpoint
+      - AWSssmmessagesinterfaceendpoint      
     Properties:
       InstanceType: "t3.micro"  
       ImageId: !Ref AmazonLinux2Ami        
